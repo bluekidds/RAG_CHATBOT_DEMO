@@ -7,8 +7,11 @@ from langchain_chroma import Chroma
 from rank_bm25 import BM25Okapi
 from config import config
 from openai import OpenAI
+import pandas as pd
+import numpy as np
 import chromadb
 import tiktoken
+import pickle
 import jieba
 import json
 import time
@@ -18,6 +21,8 @@ import os
 directory_path = config['DIRECTORY_PATH']
 openai_api_key = config['OPENAI_API_KEY']
 anyscale_api_key = config["ANYSCALE_API_KEY"]
+
+llm = config['LLM']
 model = config['EMBEDDING_MODEL_NAME']
 max_tokens = config['MAX_TOKENS']
 chunk_size = config['CHUNK_SIZE']
@@ -27,10 +32,17 @@ retrieval_reference = config['RETRIEVAL_REFERENCE']
 lexical_search_k = config['LEXICAL_SEARCH_K']
 collection_name = config['COLLECTION_NAME']
 max_content_lengths = config['MAX_CONTEXT_LENGTHS']
-llm = config['LLM']
 system_content = config['SYSTEM_CONTENT']
 assistant_content = config['ASSISTANT_CONTENT']
 temperature = config['TEMPERATURE']
+chunk_settings = config['CHUNKS']
+
+evaluation_llm = config['EVALUATION_LLM']
+evaluation_system_content = config['EVALUATION_SYSTEM_CONTENT']
+
+
+def get_config(key):
+    return config[key]
 
 embedding_model = OpenAIEmbeddings(
     model=model,
@@ -246,15 +258,16 @@ def lexical_search(index, query, chunks):
    
     return lexical_context
 
-def get_chunks():
-    with open('./chunks/0521_ChunkSize500Collection.json', 'r') as file:
+def get_chunks(name):
+    print(name)
+    with open(name, 'r') as file:
         all_chunks = json.load(file)
     return all_chunks
 
-def get_context_length():
-    return int(0.8*max_content_lengths[llm]) - get_num_tokens(system_content + assistant_content)
+def get_context_length(content = system_content + assistant_content):
+    return int(0.8*max_content_lengths[llm]) - get_num_tokens(content)
 
-def generate_response(stream, user_content="", max_retries=1, retry_interval=60):
+def generate_response(stream, llm=llm, system_content=system_content, user_content="", max_retries=1, retry_interval=60):
     """Generate response from an LLM."""
     retry_count = 0
     client = get_client()
@@ -284,9 +297,9 @@ def generate_response(stream, user_content="", max_retries=1, retry_interval=60)
             retry_count += 1
     return ""
 
-def generated_answer_result(query, stream=True, use_lexical_search=True):
+def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm, stream=True, use_lexical_search=True):
     context_results = semantic_search(query=query)
-    chunks = get_chunks()
+    chunks = get_chunks(chunk_settings[chunk_size]['json_file'])
 
     if use_lexical_search:
         tokenized_text = []
@@ -321,3 +334,182 @@ def generated_answer_result(query, stream=True, use_lexical_search=True):
             "context" : context
         }
         return result
+    
+## for evaluation
+def get_retrieval_score(references, generated):
+    matches = np.zeros(len(references))
+    for i in range(len(references)):
+        reference_source = references[i]
+        if not reference_source:
+            matches[i] = 1
+            continue
+        for source in generated[i]:
+            # sections don't have to perfectly match
+            if (source == reference_source) :
+                matches[i] = 1
+                continue
+
+    retrieval_score = np.mean(matches)
+    return retrieval_score
+
+def get_answer_evaluation(query, generated_answer, reference_answer, llm):
+    # Generate response
+    context_length = get_context_length(evaluation_system_content)
+    user_content = trim(
+            str(
+                {
+                    "query": query,
+                    "generated_answer": generated_answer,
+                    "reference_answer": reference_answer,
+                }
+            ),
+            context_length,
+        )
+
+    response = generate_response(
+    llm=llm,
+    stream=False,
+    system_content=evaluation_system_content,
+    user_content=user_content)
+
+    score, reasoning = response.split("\n", 1) if "\n" in response else (0, "")
+    result = {
+        "question": query,
+        "generated_answer": generated_answer,
+        "reference_answer": reference_answer,
+        "score": float(score),
+        "reasoning": reasoning.lstrip("\n")
+    }
+
+    return result
+
+def get_evaluation_average_score (evaluations) :
+    evaluation_score_accumulation = 0
+    for i in range(len(evaluations)) :
+        evaluation_score_accumulation += evaluations[i]['score']
+    
+    average_evaluation_score = evaluation_score_accumulation/len(evaluations)
+    return average_evaluation_score
+
+def get_qa_datasets():
+    QA_dataset = pd.read_excel('QA Dataset.xlsx')
+    return QA_dataset
+
+def evaluate_RetrievalScore_AnswerQuality(use_lexical_search,
+                                          max_context_length, 
+                                          #   queries_dataset, 
+                                          chunks,
+                                          lexical_index,
+                                          llm_answer,
+                                          llm_evaluate,
+                                          num_chunks, 
+                                          lexical_search_k,
+                                          chunk_size,
+                                          #   vectordb_collection, 
+                                          #   retrieval_reference, 
+                                          stream
+                                         ) :
+    
+    #embedding_model_name = "text-embedding-ada-002"
+    #llm = "gpt-3.5-turbo-1106"
+    
+    start_time = time.time()
+    #queries = queries_dataset['question'].to_list()
+
+    generated_references = []
+    evaluation = []
+    queries_dataset = get_qa_datasets()
+    for index, row in queries_dataset.iterrows() : 
+
+        start_question_time = time.time()
+        result = generated_answer_result(
+            lexical_search_k=lexical_search_k,
+            llm=llm_answer,
+            query=row['question'],
+            stream=False
+        )
+
+        end_question_time = time.time()
+
+        generated_references.append(result['sources'])
+        
+        evaluate_generated_answer_result = get_answer_evaluation(
+            query =row['question'], 
+            generated_answer = result['answer'], 
+            reference_answer = row['reference_answer'],
+            llm=llm_evaluate
+        )
+
+        question_time = end_question_time - start_question_time
+        evaluate_generated_answer_result['methods'] = result['methods']
+        evaluate_generated_answer_result['generate_answer_time_spent(seconds)'] = question_time
+        evaluate_generated_answer_result['sources'] = result['sources']
+        evaluate_generated_answer_result['context'] = result['context']
+        evaluation.append(evaluate_generated_answer_result)
+    
+    real_references = ""
+    if (retrieval_reference == 'file_name'):
+        real_references = queries_dataset['source'].to_list()
+    elif (retrieval_reference == 'file_name_and_page'):
+        queries_dataset['page'] = queries_dataset['page'].astype(str)
+        real_references = queries_dataset['source'] + " p." + queries_dataset['page']
+        real_references = real_references.to_list()
+
+    retrieval_score = get_retrieval_score( real_references, generated_references )
+    
+    average_evaluation_score = get_evaluation_average_score(evaluation)
+    
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+
+    final_result = {
+        'retrieval_score' : retrieval_score, 
+        'average_evaluation_score' : average_evaluation_score,
+        'num_chunks' : num_chunks, 
+        'chunk_size' :chunk_size,
+        'num_lexical_search_chunks' : lexical_search_k if use_lexical_search else 0,
+        'embedding_model' : model,
+        'detailed_evaluation' : evaluation,
+        'time_spent' : pd.DataFrame(evaluation)['generate_answer_time_spent(seconds)'].sum()
+        
+    }
+    return final_result
+
+def get_evaluation_result(chunk_size_list=[],
+        num_chunks_list=[],
+        lexical_search_k_list=[],
+        llm_answer=llm,
+        llm_evaluate=llm):
+    result = []
+    for chunk_size in chunk_size_list:
+        all_chunks = get_chunks(chunk_settings[chunk_size]['json_file'])
+        with open(chunk_settings[chunk_size]['lexial_index_file'], 'rb') as bm25result_file:
+            lexical_index = pickle.load(bm25result_file)
+
+        for num_chunks in num_chunks_list:
+            for k in lexical_search_k_list :
+
+                final_result = evaluate_RetrievalScore_AnswerQuality(
+                    use_lexical_search = True,
+                    chunks = all_chunks,
+                    lexical_index = lexical_index,
+                    llm_answer = llm_answer,
+                    llm_evaluate = llm_evaluate,
+                    max_context_length = max_content_lengths[llm_answer],
+                    num_chunks = num_chunks,
+                    lexical_search_k = k,
+                    chunk_size = chunk_size,
+                    stream = False
+                )
+
+                print(f'Test - num_chunks:{num_chunks}, lexical_search_chunk:{k}, chunk_size:{chunk_size} - finished')
+                result.append(final_result)
+        # 將評估的結果儲存
+    result_df = pd.DataFrame(result)
+    result_df.drop(['detailed_evaluation'], axis=1).to_csv( path_or_buf = 'evaluations/Experiment_Result.csv')
+
+    for index, row in result_df.iterrows():
+        data = pd.DataFrame(row['detailed_evaluation'])
+        data.to_excel(excel_writer = 'evaluations/ChunkSize{}_NumChunks{}_LexicalSearchChunks{}_DetailedEvaluation.xlsx'.format(row['chunk_size'], row['num_chunks'], row['num_lexical_search_chunks']))
+
+    return result

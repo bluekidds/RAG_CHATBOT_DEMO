@@ -7,6 +7,13 @@ config = {
         "gpt-4-0125-preview": 128000,
         "gpt-4-turbo" : 128000
     },
+    "CHUNKS" :{
+        500: {
+            "json_file" : "chunks/ChunkSize500.json",
+            "lexial_index_file" : "chunks/ChunkSize500_LexicalIndex",
+            "chromadb_collection" : "ChunkSize500Collection"
+        }
+    },
     "LLM": "gpt-4-turbo",
     "MAX_TOKENS": 4096,
     "SYSTEM_CONTENT": "Answer the query using the context provided. Be succinct. Do not produce any content that does not appear in the context.",
@@ -20,6 +27,16 @@ config = {
     "LEXICAL_SEARCH_K": 3,
     "NUM_CHUNKS": 5,
     "RETRIEVAL_REFERENCE": 'file_name',
+    "EVALUATION_LLM": "gpt-4",
+    "EVALUATION_SYSTEM_CONTENT": """
+    Your job is to rate the quality of our generated answer {generated_answer}
+    given a query {query} and a reference answer {reference_answer}.
+    Your score has to be between 1 and 5.
+    You must return your response in a line with only the score.
+    Do not return answers in any other format.
+    On a separate line provide your reasoning for the score as well.
+    Note : your reasoning should be traditional Chinese, rather than English.
+    """,
     "FILE_ID" : {
         "電動輔助自行車及微型電動二輪車型式安全審驗管理辦法_統整.pdf" : "RoadTrafficSafetyRules",
         "產業設計創新趨勢與指引_全文.pdf" : "IndustrialDesignInnovationTrendsAndGuidelines",
