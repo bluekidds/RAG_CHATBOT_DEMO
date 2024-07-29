@@ -15,10 +15,12 @@ from langchain_community.embeddings import OpenAIEmbeddings
 import re
 from rank_bm25 import BM25Okapi
 import jieba
-import pickle
+
+from config import config
+openai_api_key = config['OPENAI_API_KEY']
 
 
-def semantic_search(query, embedding_model, collection, k ):
+def semantic_search(query, embedding_model, collection, k, retrieval_reference ):
     embedding = embedding_model.embed_query(query)
     result = collection.query(
         query_embeddings=embedding,
@@ -27,19 +29,14 @@ def semantic_search(query, embedding_model, collection, k ):
     #result_df = pd.DataFrame(result)
     semantic_context = []
     for i in range (k) :
-        file_name = result['metadatas'][0][i]['source']
-        file_page = result['metadatas'][0][i]['page']
-        source_file_name = handler_source_format( retrieval_reference = 'file_name', 
-                                        file_name = file_name, 
-                                        file_page = file_page)
-        
-        source_file_name_and_page = handler_source_format( retrieval_reference = 'file_name_and_page', 
-                                file_name = file_name, 
-                                file_page = file_page)
+        source_file_name = result['metadatas'][0][i]['source']
+        source_file_page = result['metadatas'][0][i]['page']
+        source = handler_source_format( retrieval_reference = retrieval_reference, 
+                                        file_name = source_file_name, 
+                                        file_page = source_file_page)
         semantic_context.append({'id' :result['ids'][0][i], 
                                  "text" : result['documents'][0][i], 
-                                 "source_file_name" : source_file_name , 
-                                 "source_file_name_and_page" : source_file_name_and_page,
+                                 "source" : source , 
                                  "method" : 'semantic_search'})
     return semantic_context
 
@@ -73,7 +70,7 @@ def chinese_word_preprocessing(text) :
 
 
 
-def lexical_search(index, query, chunks, k):
+def lexical_search(index, query, chunks, k, retrieval_reference):
     #query_tokens = query.lower().split()  # preprocess query
     query_tokens = chinese_word_preprocessing(query)
     scores = index.get_scores(query_tokens)  # get best matching (BM) scores
@@ -82,20 +79,16 @@ def lexical_search(index, query, chunks, k):
 
     lexical_context = []
     for i in indices :
-        file_name = chunks[i]['metadata']['source']
-        file_page = chunks[i]['metadata']['page']
-        source_file_name = handler_source_format( retrieval_reference = 'file_name', 
-                                        file_name = file_name, 
-                                        file_page = file_page)
-        source_file_name_and_page = handler_source_format( retrieval_reference = 'file_name_and_page', 
-                                file_name = file_name, 
-                                file_page = file_page)
-        
+        source_file_name = chunks[i]['metadata']['source']
+        source_file_page = chunks[i]['metadata']['page']
+        source = handler_source_format( retrieval_reference = retrieval_reference, 
+                                        file_name = source_file_name, 
+                                        file_page = source_file_page)
+         
         lexical_context.append(
             {
                 "text": chunks[i]['page_content'], 
-                "source_file_name": source_file_name, 
-                "source_file_name_and_page" : source_file_name_and_page,
+                "source": source, 
                 "score": scores[i], 
                 "method" : 'lexical_search'
 
@@ -129,7 +122,7 @@ def prepare_response(chat_completion, stream):
 def get_client(llm):
     if llm.startswith("gpt"):
         #base_url = os.environ["OPENAI_API_BASE"]
-        api_key = os.environ["OPENAI_API_KEY"]
+        api_key = openai_api_key
     else:
         base_url = os.environ["ANYSCALE_API_BASE"]
         api_key = os.environ["ANYSCALE_API_KEY"]
@@ -186,7 +179,7 @@ def get_embedding_model(embedding_model_name, model_kwargs, encode_kwargs):
 
     embedding_model = OpenAIEmbeddings(
         model=embedding_model_name,
-        openai_api_key=os.environ["OPENAI_API_KEY"],
+        openai_api_key=openai_api_key,
     )
 
     return embedding_model
@@ -217,8 +210,7 @@ def handler_source_format( retrieval_reference, file_name, file_page ) :
 
 class QueryAgent:
     def __init__(self, 
-                 chunks, 
-                 lexical_index, 
+                 chunks,  
                  use_lexical_search=True, 
                  embedding_model_name="text-embedding-ada-002",
                  llm="gpt-3.5-turbo-1106", 
@@ -230,18 +222,12 @@ class QueryAgent:
         self.chunks = chunks
         self.lexical_index = None
         if use_lexical_search:
-            # tokenized_text = []
-            # for chunk in chunks :
-            #     post = chunk['page_content']
-            #     tokenized_text.append(chinese_word_preprocessing(post))
+            tokenized_text = []
+            for chunk in chunks :
+                post = chunk['page_content']
+                tokenized_text.append(chinese_word_preprocessing(post))
                 
-            # self.lexical_index = BM25Okapi(tokenized_text)
-
-            # with open(lexical_index, 'rb') as bm25result_file:
-            #     self.lexical_index = pickle.load(bm25result_file)
-
-            self.lexical_index = lexical_index
-
+            self.lexical_index = BM25Okapi(tokenized_text)
 
 
         
@@ -251,7 +237,7 @@ class QueryAgent:
             model_kwargs={"device": "cuda"}, 
             encode_kwargs={"device": "cuda", "batch_size": 100})
         
-        # Context length (restrict input length to 80% of total context length)
+        # Context length (restrict input length to 50% of total context length)
         max_context_length = int(0.8*max_context_length)
         
         # LLM
@@ -261,20 +247,22 @@ class QueryAgent:
         self.system_content = system_content
         self.assistant_content = assistant_content
 
-    def __call__(self, lexical_search_k, query, collection, num_chunks=5, stream=True):
+    def __call__(self, lexical_search_k, query, collection, retrieval_reference, num_chunks=5, stream=True):
         # Get sources and context
         context_results = semantic_search(
             query=query, 
             embedding_model=self.embedding_model,
             collection = collection,
-            k=num_chunks) #k : 相似度最高的前k個文本
+            k=num_chunks,
+            retrieval_reference = retrieval_reference) #k : 相似度最高的前k個文本
         
         if self.lexical_index:
             lexical_context = lexical_search(
                 index=self.lexical_index, 
                 query=query, 
                 chunks=self.chunks, 
-                k=lexical_search_k)
+                k=lexical_search_k,
+                retrieval_reference = retrieval_reference)
             # Insert after <lexical_search_k> worth of semantic results
             context_results[lexical_search_k:lexical_search_k] = lexical_context
             #print('length of lexical content' , len(lexical_context))
@@ -284,8 +272,7 @@ class QueryAgent:
             
         # Generate response
         context = [item["text"] for item in context_results]
-        source_file_name = [item["source_file_name"] for item in context_results]
-        source_file_name_and_page = [item["source_file_name_and_page"] for item in context_results]
+        sources = [item["source"] for item in context_results]
         #sources = handler_source_format(sources = sources)
         methods = [item["method"] for item in context_results]
         user_content = f"query: {query}, context: {context}"
@@ -300,8 +287,7 @@ class QueryAgent:
         # Result
         result = {
             "question": query,
-            "source_file_name": source_file_name,
-            "source_file_name_and_page": source_file_name_and_page,
+            "sources": sources,
             "methods" : methods,
             "answer": answer,
             "llm": self.llm,
@@ -311,36 +297,24 @@ class QueryAgent:
     
 
 
-# def get_retrieval_score(references, generated):
-#     matches = np.zeros(len(references))
-#     for i in range(len(references)):
-#         reference_source = references[i]
-#         if not reference_source:
-#             matches[i] = 1
-#             continue
-#         for source in generated[i]:
-#             # sections don't have to perfectly match
-#             if (source == reference_source) :
-#                 matches[i] = 1
-#                 continue
+def get_retrieval_score(references, generated):
+    matches = np.zeros(len(references))
+    for i in range(len(references)):
+        reference_source = references[i]
+        if not reference_source:
+            matches[i] = 1
+            continue
+        for source in generated[i]:
+            # sections don't have to perfectly match
+            if (source == reference_source) :
+                matches[i] = 1
+                continue
 
-#     retrieval_score = np.mean(matches)
-#     return retrieval_score
-
-def get_retrieval_score(reference, generated):
-    #matches = np.zeros(len(references))
-    match = 0
-    for source in generated:
-        # sections don't have to perfectly match
-        if (source == reference) :
-            match = 1
-            break    
-    return match
+    retrieval_score = np.mean(matches)
+    return retrieval_score
 
 
-def get_answer_evaluation(query, llm, generated_answer, reference_answer , max_context_length):
-
-    # 提供明確的標準
+def get_answer_evaluation(query, generated_answer, reference_answer , max_context_length):
     evaluation_system_content = """
     Your job is to rate the quality of our generated answer {generated_answer}
     given a query {query} and a reference answer {reference_answer}.
@@ -364,7 +338,7 @@ def get_answer_evaluation(query, llm, generated_answer, reference_answer , max_c
         )
 
     response = generate_response(
-    llm=llm,
+    llm="gpt-4",
     temperature=0.0,
     stream=False,
     system_content=evaluation_system_content,
@@ -375,33 +349,28 @@ def get_answer_evaluation(query, llm, generated_answer, reference_answer , max_c
         "question": query,
         "generated_answer": generated_answer,
         "reference_answer": reference_answer,
-        "evaluation_score": float(score),
+        "score": float(score),
         "reasoning": reasoning.lstrip("\n")
         #"sources": sources
     }
 
     return result
 
-
-
-def get_average_score (data, attribute) :
+def get_evaluation_average_score (evaluations) :
     evaluation_score_accumulation = 0
-    for i in range(len(data)) :
-        evaluation_score_accumulation += data[i][attribute]
+    for i in range(len(evaluations)) :
+        evaluation_score_accumulation += evaluations[i]['score']
     
-    average_evaluation_score = evaluation_score_accumulation/len(data)
+    average_evaluation_score = evaluation_score_accumulation/len(evaluations)
     return average_evaluation_score
-
     
     
 
 
 def evaluate_RetrievalScore_AnswerQuality(use_lexical_search,
                                           chunks,
-                                          lexical_index,
                                           embedding_model_name, 
-                                          llm_answer,
-                                          llm_evaluate,  
+                                          llm, 
                                           max_context_length, 
                                           system_content, 
                                           queries_dataset, 
@@ -409,25 +378,28 @@ def evaluate_RetrievalScore_AnswerQuality(use_lexical_search,
                                           lexical_search_k,
                                           chunk_size, 
                                           vectordb_collection, 
-                                          #retrieval_reference, 
+                                          retrieval_reference, 
                                           stream = False
                                          ) :
     
+    #embedding_model_name = "text-embedding-ada-002"
+    #llm = "gpt-3.5-turbo-1106"
     
     start_time = time.time()
 
     
     agent = QueryAgent(
-        use_lexical_search=use_lexical_search, 
-        chunks = chunks,
-        lexical_index = lexical_index,
-        embedding_model_name=embedding_model_name,
-        llm=llm_answer,
-        max_context_length=max_context_length,
-        system_content=system_content, 
-        )
+    use_lexical_search=use_lexical_search, 
+    chunks = chunks,
+    embedding_model_name=embedding_model_name,
+    llm=llm,
+    max_context_length=max_context_length,
+    system_content=system_content, 
+    )
 
+    #queries = queries_dataset['question'].to_list()
 
+    generated_references = []
     evaluation = []
     for index, row in queries_dataset.iterrows() : 
 
@@ -437,65 +409,81 @@ def evaluate_RetrievalScore_AnswerQuality(use_lexical_search,
                        query=row['question'],
                        num_chunks = num_chunks, 
                        collection = vectordb_collection,
-                       #retrieval_reference = retrieval_reference,
+                       retrieval_reference = retrieval_reference,
                        stream=False)
         end_question_time = time.time()
 
-        
+        generated_references.append(generated_answer_result['sources'])
         
         evaluate_generated_answer_result = get_answer_evaluation(query =row['question'], 
-            llm = llm_evaluate,
             generated_answer = generated_answer_result['answer'], 
             reference_answer = row['reference_answer'], 
             max_context_length = max_context_length)
+        
+        
+        
+        
+        #print(generated_answer_result)
+        # if  (retrieval_reference == 'chunk'):
+        #     generated_references.append(generated_answer_result['context'])
+        #     evaluate_generated_answer_result = get_answer_evaluation(query =row['question'], 
+        #               generated_answer = generated_answer_result['answer'], 
+        #               reference_answer = row['reference_answer'], 
+        #               sources = generated_answer_result['context'], 
+        #               max_context_length = max_context_length)
+        # elif (retrieval_reference == 'source'):
+        #     generated_references.append(generated_answer_result['sources'])
+        #     evaluate_generated_answer_result = get_answer_evaluation(query =row['question'], 
+        #               generated_answer = generated_answer_result['answer'], 
+        #               reference_answer = row['reference_answer'], 
+        #               sources = generated_answer_result['sources'], 
+        #               max_context_length = max_context_length)
+
+
+
 
         
-        file_name_retrieval_score = get_retrieval_score( reference = row['source'], 
-                                                         generated = generated_answer_result['source_file_name'] )
+        
 
-        file_name_and_page_retrieval_score = get_retrieval_score( reference =  row['source'] + " p." + str(row['page']) , 
-                                                                  generated = generated_answer_result['source_file_name_and_page'])
+        #print(generated_answer_result)
         
-        
-    
+
+
         question_time = end_question_time - start_question_time
-        evaluate_generated_answer_result['generate_answer_time_spent(seconds)'] = question_time
         evaluate_generated_answer_result['methods'] = generated_answer_result['methods']
-        evaluate_generated_answer_result['file_name_retrieval_score'] = file_name_retrieval_score
-        evaluate_generated_answer_result['file_name_and_page_retrieval_score'] = file_name_and_page_retrieval_score
-        evaluate_generated_answer_result['source_file_name'] = generated_answer_result['source_file_name']
-        evaluate_generated_answer_result['source_file_name_and_page'] = generated_answer_result['source_file_name_and_page']
+        evaluate_generated_answer_result['generate_answer_time_spent(seconds)'] = question_time
+        evaluate_generated_answer_result['sources'] = generated_answer_result['sources']
         evaluate_generated_answer_result['context'] = generated_answer_result['context']
-        evaluate_generated_answer_result['llm_answer'] = llm_answer
-        evaluate_generated_answer_result['llm_evaluate'] = llm_evaluate
-
         evaluation.append(evaluate_generated_answer_result)
-
+ 
+        #print(index)
 
     
+    real_references = ""
+    if (retrieval_reference == 'file_name'):
+        real_references = queries_dataset['source'].to_list()
+    elif (retrieval_reference == 'file_name_and_page'):
+        queries_dataset['page'] = queries_dataset['page'].astype(str)
+        real_references = queries_dataset['source'] + " p." + queries_dataset['page']
+        real_references = real_references.to_list()
 
- 
-    average_evaluation_score = get_average_score( data = evaluation , 
-                                                  attribute = 'evaluation_score')
-    average_file_name_retrieval_score = get_average_score( data = evaluation , 
-                                                           attribute = 'file_name_retrieval_score')
-    average_file_name_and_page_retrieval_score = get_average_score( data = evaluation , 
-                                                                    attribute = 'file_name_and_page_retrieval_score')
+
+    #print(real_references)
+    retrieval_score = get_retrieval_score( real_references, generated_references )
+    
+    average_evaluation_score = get_evaluation_average_score(evaluation)
     
     end_time = time.time()
     elapsed_time = end_time - start_time
     
 
     final_result = {
-        'file_name_retrieval_score' : average_file_name_retrieval_score, 
-        'file_name_and_page_retrieval_score' : average_file_name_and_page_retrieval_score,
+        'retrieval_score' : retrieval_score, 
         'average_evaluation_score' : average_evaluation_score,
         'num_chunks' : num_chunks, 
-        'chunk_size' : chunk_size,
+        'chunk_size' :chunk_size,
         'num_lexical_search_chunks' : lexical_search_k if use_lexical_search else 0,
         'embedding_model' : embedding_model_name,
-        'llm_answer' : llm_answer,
-        'llm_evaluate' : llm_evaluate,
         'detailed_evaluation' : evaluation,
         'time_spent' : pd.DataFrame(evaluation)['generate_answer_time_spent(seconds)'].sum()
         

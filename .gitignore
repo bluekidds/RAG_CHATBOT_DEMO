@@ -1,1 +1,4 @@
 .DS_Store
+venv
+chromadb
+__pycache__
