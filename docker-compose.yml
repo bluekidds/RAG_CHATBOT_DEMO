@@ -1,0 +1,52 @@
+version: '3.7'
+
+services:
+  traefik:
+    image: traefik:v2.1
+    command:
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --providers.docker=true
+      - --certificatesresolvers.myresolver.acme.tlschallenge=true
+      - --certificatesresolvers.myresolver.acme.email=aws_cloud@wavenet.com.tw
+      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.myresolver.acme.dnsChallenge.provider=cloudflare
+      - --certificatesresolvers.myresolver.acme.dnsChallenge.delayBeforeCheck=0
+      # - --certificatesresolvers.myresolver.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory
+    labels:
+      - "traefik.http.routers.http_catchall.rule=HostRegexp(`{any:.+}`)"
+      - "traefik.http.routers.http_catchall.entrypoints=web"
+      - "traefik.http.routers.http_catchall.middlewares=https_redirect"
+      - "traefik.http.middlewares.https_redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.https_redirect.redirectscheme.permanent=true"
+    environment:
+      - CF_API_EMAIL=${CF_API_EMAIL}
+      - CF_API_KEY=${CF_API_KEY}
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./letsencrypt:/letsencrypt
+    container_name: "traefik"
+
+rag-web:
+  build:
+    context: .
+  restart: always
+  ports:
+    - 3000:3000
+  labels:
+    - "traefik.enable=true"
+    - "traefik.http.routers.rag.tls.certresolver=myresolver"
+    - "traefik.http.routers.rag.rule=Host(`${RAG_APP_URL}`)"
+    - "traefik.http.routers.rag.entrypoints=websecure"
+    - "traefik.http.services.rag.loadbalancer.server.port=3000"
+  container_name: "rag-web"
+  networks:
+    - "traefik"
+
+networks:
+  traefik:
+    external:
+      name: traefik_proxy
