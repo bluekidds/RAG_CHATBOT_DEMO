@@ -30,21 +30,21 @@ services:
       - ./letsencrypt:/letsencrypt
     container_name: "traefik"
 
-rag-web:
-  build:
-    context: .
-  restart: always
-  ports:
-    - 3000:3000
-  labels:
-    - "traefik.enable=true"
-    - "traefik.http.routers.rag.tls.certresolver=myresolver"
-    - "traefik.http.routers.rag.rule=Host(`${RAG_APP_URL}`)"
-    - "traefik.http.routers.rag.entrypoints=websecure"
-    - "traefik.http.services.rag.loadbalancer.server.port=3000"
-  container_name: "rag-web"
-  networks:
-    - "traefik"
+  rag-web:
+    build:
+      context: .
+    restart: always
+    ports:
+      - 3000:3000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rag.tls.certresolver=myresolver"
+      - "traefik.http.routers.rag.rule=Host(`${RAG_APP_URL}`)"
+      - "traefik.http.routers.rag.entrypoints=websecure"
+      - "traefik.http.services.rag.loadbalancer.server.port=3000"
+    container_name: "rag-web"
+    networks:
+      - "traefik"
 
 networks:
   traefik:
