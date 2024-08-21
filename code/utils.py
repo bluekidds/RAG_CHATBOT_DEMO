@@ -5,6 +5,16 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain_chroma import Chroma
+from agentic_chunker import AgenticChunker
+from langchain.output_parsers.openai_tools import JsonOutputToolsParser
+from langchain_community.chat_models import AzureChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda
+from langchain.chains import create_extraction_chain
+from typing import Optional, List
+from langchain.chains import create_extraction_chain_pydantic
+from langchain_core.pydantic_v1 import BaseModel
+from langchain import hub
 from rank_bm25 import BM25Okapi
 from config import config
 # from openai import OpenAI
@@ -120,10 +130,52 @@ def Transformer_DocumentFormat(split_docs, file_id_name):
     ids = [element for sublist in ids for element in sublist]
     return metadatas, documents, embeddings, ids
 
+def get_client():
+    # client = OpenAI(api_key=api_key)
+    client = AzureOpenAI(
+        api_key=openai_api_key,  
+        api_version="2023-12-01-preview",
+        azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
+    )
+    return client
+
+# class for level5
+class Sentences(BaseModel):
+    sentences: List[str]
+
+def get_propositions(text):
+    extraction_chain = create_extraction_chain_pydantic(pydantic_schema=Sentences, llm=llm)
+    client = AzureChatOpenAI(
+        azure_deployment="gpt-4o-mini",
+        openai_api_version="2024-07-18",
+    )
+    output = client.invoke({
+    	"input": text
+    }).content
+    
+    propositions = extraction_chain.run(output)[0].sentences
+    return propositions
+
 # Split documents into manageable chunks
 def split_text(documents):
     results = []
     for document in documents:
+        paragraphs = document["pages"].split("\n\n")
+        print(len(paragraphs))
+        essay_propositions = []
+        for i, para in enumerate(paragraphs):
+            propositions = get_propositions(para)
+            
+            essay_propositions.extend(propositions)
+            print (f"Done with {i}")
+        print (f"You have {len(essay_propositions)} propositions")
+        essay_propositions[:10]
+        ac = AgenticChunker()
+        ac.add_propositions(essay_propositions)
+        ac.pretty_print_chunks()
+        chunks = ac.get_chunks(get_type='list_of_strings')
+        print(chunks)
+
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -174,19 +226,6 @@ def prepare_response(chat_completion, stream):
         return response_stream(chat_completion)
     else:
         return chat_completion.choices[0].message.content
-def get_client():
-    if llm.startswith("gpt"):
-        #base_url = os.environ["OPENAI_API_BASE"]
-        api_key = openai_api_key
-    else:
-        api_key = anyscale_api_key
-    # client = OpenAI(api_key=api_key)
-    client = AzureOpenAI(
-        api_key=openai_api_key,  
-        api_version="2023-12-01-preview",
-        azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
-    )
-    return client
 
 def get_collection():
     return client_chroma.get_collection(name=collection_name)
