@@ -1,7 +1,14 @@
 import streamlit as st
 from Query import res
 
+st.set_page_config(
+    page_title="Query",
+    # page_icon="👋",
+)
+
 st.title("Demo Query")
+
+st.sidebar.success("Select a demo above.")
 
 # Initialize chat history
 if "messages" not in st.session_state:

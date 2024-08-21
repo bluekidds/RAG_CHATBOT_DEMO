@@ -1,9 +1,17 @@
 FROM python:3.12
 
-WORKDIR /app/
-# RUN python -m venv /opt/venv
-# ENV PATH="/opt/venv/bin:$PATH"
-# COPY ./requirements.txt /app/requirements.txt
-RUN python3.12 -m pip install -r ./requirements.txt
+WORKDIR /usr/src/app
 
-ENTRYPOINT ["/bin/bash", "/start_service.sh"]
+# dont write pyc files
+# dont buffer to stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+COPY ./requirements.txt /usr/src/app/requirements.txt
+
+# dependencies
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install -r requirements.txt \
+    && rm -rf /root/.cache/pip
+
+COPY ./ /usr/src/app

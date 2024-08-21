@@ -3,10 +3,12 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
+from langchain_openai import AzureOpenAIEmbeddings
 from langchain_chroma import Chroma
 from rank_bm25 import BM25Okapi
 from config import config
-from openai import OpenAI
+# from openai import OpenAI
+from openai import AzureOpenAI
 import pandas as pd
 import numpy as np
 import chromadb
@@ -21,6 +23,7 @@ import os
 directory_path = config['DIRECTORY_PATH']
 openai_api_key = config['OPENAI_API_KEY']
 anyscale_api_key = config["ANYSCALE_API_KEY"]
+azure_openai_endpoint = config['AZURE_OPENAI_ENDPOINT']
 
 llm = config['LLM']
 model = config['EMBEDDING_MODEL_NAME']
@@ -44,10 +47,17 @@ evaluation_system_content = config['EVALUATION_SYSTEM_CONTENT']
 def get_config(key):
     return config[key]
 
-embedding_model = OpenAIEmbeddings(
-    model=model,
-    openai_api_key=openai_api_key,
+# embedding_model = OpenAIEmbeddings(
+#     model=model,
+#     openai_api_key=openai_api_key,
+# )
+os.environ["AZURE_OPENAI_API_KEY"] = openai_api_key
+os.environ["AZURE_OPENAI_ENDPOINT"] = azure_openai_endpoint
+embedding_model = AzureOpenAIEmbeddings(
+    azure_deployment="wavenet-rag-embedding",
+    openai_api_version="2023-12-01-preview",
 )
+
 client_chroma = chromadb.PersistentClient(path='./chromadb/')
 
 def list_files_in_directory():
@@ -170,7 +180,12 @@ def get_client():
         api_key = openai_api_key
     else:
         api_key = anyscale_api_key
-    client = OpenAI(api_key=api_key)
+    # client = OpenAI(api_key=api_key)
+    client = AzureOpenAI(
+        api_key=openai_api_key,  
+        api_version="2023-12-01-preview",
+        azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
+    )
     return client
 
 def get_collection():
@@ -282,6 +297,7 @@ def generate_response(stream, llm=llm, system_content=system_content, user_conte
     ]
     while retry_count <= max_retries:
         try:
+            print('asking gpt')
             chat_completion = client.chat.completions.create(
                 model=llm,
                 max_tokens=max_tokens,
