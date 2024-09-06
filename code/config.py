@@ -1,11 +1,13 @@
 config = {
     "OPENAI_API_KEY": "your-key",
     "ANYSCALE_API_KEY": "your-key",
+    "AZURE_OPENAI_ENDPOINT": "https://wavenet-rag-openai.openai.azure.com/",
     "MAX_CONTEXT_LENGTHS": {
         "gpt-3.5-turbo-1106": 16385,
         "gpt-4": 8192,
         "gpt-4-0125-preview": 128000,
-        "gpt-4-turbo" : 128000
+        "gpt-4-turbo": 128000,
+        "gpt-4o-mini": 128000,
     },
     "CHUNKS" :{
         500: {
@@ -14,7 +16,7 @@ config = {
             "chromadb_collection" : "ChunkSize500Collection"
         }
     },
-    "LLM": "gpt-4-turbo",
+    "LLM": "gpt-4o-mini",
     "MAX_TOKENS": 4096,
     "SYSTEM_CONTENT": "Answer the query using the context provided. Be succinct. Do not produce any content that does not appear in the context.",
     "ASSISTANT_CONTENT": "",
@@ -23,7 +25,7 @@ config = {
     "EMBEDDING_MODEL_NAME": "text-embedding-3-small",
     "CHUNK_SIZE": 500,
     "CHUNK_OVERLAP": 50,
-    "COLLECTION_NAME": "0626_Test_Collection",
+    "COLLECTION_NAME": "level5",
     "LEXICAL_SEARCH_K": 3,
     "NUM_CHUNKS": 5,
     "RETRIEVAL_REFERENCE": 'file_name',

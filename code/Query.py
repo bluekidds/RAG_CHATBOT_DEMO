@@ -11,12 +11,17 @@ def res(query):
     end_time = time.time()
 
 
-    print(f"question :{query}" )
+    print(f"question :{query}\n\n" )
 
-    print(f"answer : {result["answer"]}")
+    print(f"answer : {result["answer"]}\n\n")
+
+    print(f"source : {result["sources"]}\n\n")
+
+    print(f"context :{result["context"]}\n\n" )
+    # f"context : {list(set(result["context"]))}\n\n"
 
     # generated_answer_result_df = pd.DataFrame(generated_answer_result)
     print('time spent:', end_time - start_time )
-    return f"question :{query} answer : {result["answer"]} time spent: {end_time - start_time}"
+    return f"question :{query}\n\n" f"answer : {result["answer"]}\n\n" f"source : {list(set(result["sources"]))}\n\n" f"time spent: {end_time - start_time}"
 
 #generated_answer_result_df.to_csv('result.csv')

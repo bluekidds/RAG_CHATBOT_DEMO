@@ -4,10 +4,13 @@ from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_openai import AzureOpenAIEmbeddings
+from langchain_openai import AzureChatOpenAI
 from langchain_chroma import Chroma
+from langchain.docstore.document import Document
+# from langchain_community.callbacks import get_openai_callback
 from agentic_chunker import AgenticChunker
 from langchain.output_parsers.openai_tools import JsonOutputToolsParser
-from langchain_community.chat_models import AzureChatOpenAI
+# from langchain_community.chat_models import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain.chains import create_extraction_chain
@@ -144,14 +147,12 @@ class Sentences(BaseModel):
     sentences: List[str]
 
 def get_propositions(text):
-    extraction_chain = create_extraction_chain_pydantic(pydantic_schema=Sentences, llm=llm)
     client = AzureChatOpenAI(
         azure_deployment="gpt-4o-mini",
-        openai_api_version="2024-07-18",
+        api_version="2024-02-15-preview",
     )
-    output = client.invoke({
-    	"input": text
-    }).content
+    extraction_chain = create_extraction_chain_pydantic(pydantic_schema=Sentences, llm=client)
+    output = client.invoke([("human", text)]).content
     
     propositions = extraction_chain.run(output)[0].sentences
     return propositions
@@ -160,34 +161,56 @@ def get_propositions(text):
 def split_text(documents):
     results = []
     for document in documents:
-        paragraphs = document["pages"].split("\n\n")
-        print(len(paragraphs))
-        essay_propositions = []
-        for i, para in enumerate(paragraphs):
-            propositions = get_propositions(para)
-            
-            essay_propositions.extend(propositions)
-            print (f"Done with {i}")
-        print (f"You have {len(essay_propositions)} propositions")
-        essay_propositions[:10]
-        ac = AgenticChunker()
-        ac.add_propositions(essay_propositions)
-        ac.pretty_print_chunks()
-        chunks = ac.get_chunks(get_type='list_of_strings')
-        print(chunks)
+        print(document["pages"])
+        page_result = []
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=[
-                "\n\n",
-                "\n",
-                ".",
-                "\u3002"  # Ideographic full stop
-            ]
-        )
-        split_docs = text_splitter.split_documents(document["pages"])
-        results.append(Transformer_DocumentFormat(split_docs, document["file_id_name"]))
+        # text_splitter = RecursiveCharacterTextSplitter(
+        #     chunk_size=chunk_size,
+        #     chunk_overlap=chunk_overlap,
+        #     separators=[
+        #         "\n\n",
+        #         "\n",
+        #         ".",
+        #         "\u3002"  # Ideographic full stop
+        #     ]
+        # )
+        # split_docs = text_splitter.split_documents(document["pages"])
+        # print(split_docs)
+
+        for page in document["pages"]:
+            print(page)
+            paragraphs = page.page_content.split("\n\n")
+            print(paragraphs)
+            print(len(paragraphs))
+            essay_propositions = []
+            for i, para in enumerate(paragraphs):
+                print(para)
+                propositions = get_propositions(para)
+                
+                essay_propositions.extend(propositions)
+                print (f"Done with {i}")
+            print (f"You have {len(essay_propositions)} propositions")
+            ac = AgenticChunker()
+            ac.add_propositions(essay_propositions)
+            ac.pretty_print_chunks()
+            chunks = ac.get_chunks(get_type='list_of_strings')
+            print('------chunks in this page------')
+            print(chunks)
+            def to_document(d):
+                print(str(d))
+                doc = Document(
+                    page_content=str(d),
+                    metadata=page.metadata
+                )
+                return doc
+            docs = map(to_document, chunks)
+            print('------ to documents ------')
+            print(docs)
+            page_result.extend(docs)
+
+        # results.append(Transformer_DocumentFormat(split_docs, document["file_id_name"]))
+        print('------chunks done in this page------')
+        results.append(Transformer_DocumentFormat(page_result, document["file_id_name"]))
         print(f"processed file: {document['file_name']}")
     return results
 
@@ -207,6 +230,11 @@ def save_to_chroma(chunks):
         except Exception as e:
             print(e)
     return
+
+def get_chroma_json():
+    collection = client_chroma.get_collection(name=collection_name)
+    return collection.get()
+    
 
 def save_to_bm25(chunks):
     return
@@ -276,6 +304,7 @@ def semantic_search(query):
     )
     semantic_context = []
     for i in range (num_chunks) :
+        print(result['documents'])
         source_file_name = result['metadatas'][0][i]['source']
         source_file_page = result['metadatas'][0][i]['page']
         source = handler_source_format( retrieval_reference = retrieval_reference, 
@@ -284,6 +313,7 @@ def semantic_search(query):
         semantic_context.append({'id' :result['ids'][0][i], 
                                  "text" : result['documents'][0][i], 
                                  "source" : source , 
+                                 "sourcetext" : result['documents'][0],
                                  "method" : 'semantic_search'})
     return semantic_context
 
@@ -369,10 +399,10 @@ def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm,
         )
         # Insert after <lexical_search_k> worth of semantic results
         context_results[lexical_search_k:lexical_search_k] = lexical_context
-            
         # Generate response
         context = [item["text"] for item in context_results]
         sources = [item["source"] for item in context_results]
+        # sourcetexts = [item["sourcetext"] for item in context_results]
         #sources = handler_source_format(sources = sources)
         methods = [item["method"] for item in context_results]
         user_content = f"query: {query}, context: {context}"
