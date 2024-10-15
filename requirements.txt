@@ -19,3 +19,10 @@ rank_bm25
 openpyxl
 streamlit
 azure-storage-blob
+fastapi
+fastapi[standard]
+langchain
+langchain-chroma 
+unstructured[all-docs]
+pydantic
+lxml

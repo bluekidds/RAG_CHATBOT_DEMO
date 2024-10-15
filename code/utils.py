@@ -128,7 +128,9 @@ def Transformer_DocumentFormat(split_docs, file_id_name):
         
         embeddings.append(embedding_model.embed_documents([doc.page_content])[0])
         ids.append([file_id_name+str(i)])
+        print (f"Transformer_DocumentFormat Done with {i}")
         i += 1
+    print ("Transformer_DocumentFormat Completed")
 
     ids = [element for sublist in ids for element in sublist]
     return metadatas, documents, embeddings, ids
@@ -163,6 +165,7 @@ def split_text(documents):
     for document in documents:
         print(document["pages"])
         page_result = []
+        
 
         # text_splitter = RecursiveCharacterTextSplitter(
         #     chunk_size=chunk_size,
@@ -234,7 +237,6 @@ def save_to_chroma(chunks):
 def get_chroma_json():
     collection = client_chroma.get_collection(name=collection_name)
     return collection.get()
-    
 
 def save_to_bm25(chunks):
     return
@@ -598,3 +600,15 @@ def get_evaluation_result(chunk_size_list=[],
         data.to_excel(excel_writer = 'evaluations/ChunkSize{}_NumChunks{}_LexicalSearchChunks{}_DetailedEvaluation.xlsx'.format(row['chunk_size'], row['num_chunks'], row['num_lexical_search_chunks']))
 
     return result
+
+def dalle3(prompt):
+    client = get_client()
+    result = client.images.generate(
+        model="Dalle3", # the name of your DALL-E 3 deployment
+        prompt=prompt,
+        n=1
+    )
+
+    json_response = json.loads(result.model_dump_json())
+    image_url = json_response["data"][0]["url"]
+    return image_url

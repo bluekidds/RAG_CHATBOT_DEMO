@@ -44,6 +44,21 @@ services:
       - "traefik.http.routers.rag.entrypoints=websecure"
       - "traefik.http.services.rag.loadbalancer.server.port=8501"
     container_name: "rag-web"
+
+  rag-fa:
+    build: ./
+    command: fastapi run code/fa.py
+    volumes:
+        - ./:/usr/src/app
+    ports:
+        - 8000:8000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fa.tls.certresolver=myresolver"
+      - "traefik.http.routers.fa.rule=Host(`${RAG_FA_URL}`)"
+      - "traefik.http.routers.fa.entrypoints=websecure"
+      - "traefik.http.services.fa.loadbalancer.server.port=8000"
+    container_name: "rag-fa"
 #     networks:
 #       - "traefik"
 

@@ -9,6 +9,7 @@ def generate_data_store():
 
   print("---spliting chunks---")
   chunks = split_text(documents) # Split documents into manageable chunks
+  # chunks = multi_vector_chunk(documents) # Split documents into manageable chunks
 
   save_to_chroma(chunks) # Save the processed data to a data store
 
