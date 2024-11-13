@@ -16,7 +16,8 @@ from langchain_core.runnables import RunnableLambda
 from langchain.chains import create_extraction_chain
 from typing import Optional, List
 from langchain.chains import create_extraction_chain_pydantic
-from langchain_core.pydantic_v1 import BaseModel
+from pydantic import BaseModel
+# from langchain_core.pydantic_v1 import BaseModel
 from langchain import hub
 from rank_bm25 import BM25Okapi
 from config import config
@@ -180,6 +181,8 @@ def split_text(documents):
         # split_docs = text_splitter.split_documents(document["pages"])
         # print(split_docs)
 
+        if (document["pages"] is None):
+            continue
         for page in document["pages"]:
             print(page)
             paragraphs = page.page_content.split("\n\n")
@@ -260,6 +263,9 @@ def prepare_response(chat_completion, stream):
 def get_collection():
     return client_chroma.get_collection(name=collection_name)
 
+def get_old_collection():
+    return client_chroma.get_collection(name='level5')
+
 ## for Query.py
 def contains_only_chinese_punctuation(text_list):
     # Define a regular expression pattern to match Chinese punctuation characters
@@ -300,13 +306,17 @@ def handler_source_format( retrieval_reference, file_name, file_page ):
 def semantic_search(query):
     embedding = embedding_model.embed_query(query)
     collection = get_collection()
+    collection2 = get_old_collection()
     result = collection.query(
+        query_embeddings=embedding,
+        n_results=num_chunks
+    )
+    result2 = collection2.query(
         query_embeddings=embedding,
         n_results=num_chunks
     )
     semantic_context = []
     for i in range (num_chunks) :
-        print(result['documents'])
         source_file_name = result['metadatas'][0][i]['source']
         source_file_page = result['metadatas'][0][i]['page']
         source = handler_source_format( retrieval_reference = retrieval_reference, 
@@ -317,6 +327,17 @@ def semantic_search(query):
                                  "source" : source , 
                                  "sourcetext" : result['documents'][0],
                                  "method" : 'semantic_search'})
+    for i in range (num_chunks) :
+        source_file_name = result2['metadatas'][0][i]['source']
+        source_file_page = result2['metadatas'][0][i]['page']
+        source = handler_source_format( retrieval_reference = retrieval_reference, 
+                                        file_name = source_file_name, 
+                                        file_page = source_file_page)
+        semantic_context.append({'id' :result2['ids'][0][i], 
+                                 "text" : result2['documents'][0][i], 
+                                 "source" : source , 
+                                 "sourcetext" : result2['documents'][0],
+                                 "method" : 'semantic_search'})
     return semantic_context
 
 def lexical_search(index, query, chunks):
@@ -325,16 +346,32 @@ def lexical_search(index, query, chunks):
     indices = sorted(range(len(scores)), key=lambda i: -scores[i])[:lexical_search_k]  # sort and get top k
 
     lexical_context = []
+    # for i in indices :
+    #     source_file_name = chunks[i]['metadata']['source']
+    #     source_file_page = chunks[i]['metadata']['page']
+    #     source = handler_source_format( retrieval_reference = retrieval_reference, 
+    #                                     file_name = source_file_name, 
+    #                                     file_page = source_file_page)
+
+    #     lexical_context.append(
+    #         {
+    #             "text": chunks[i]['page_content'], 
+    #             "source": source, 
+    #             "score": scores[i], 
+    #             "method" : 'lexical_search'
+
+    #         }
+    #     )
     for i in indices :
-        source_file_name = chunks[i]['metadata']['source']
-        source_file_page = chunks[i]['metadata']['page']
+        source_file_name = chunks['metadatas'][i]['title']
+        source_file_page = chunks['metadatas'][i]['page']
         source = handler_source_format( retrieval_reference = retrieval_reference, 
                                         file_name = source_file_name, 
                                         file_page = source_file_page)
 
         lexical_context.append(
             {
-                "text": chunks[i]['page_content'], 
+                "text": chunks['documents'][i], 
                 "source": source, 
                 "score": scores[i], 
                 "method" : 'lexical_search'
@@ -386,17 +423,22 @@ def generate_response(stream, llm=llm, system_content=system_content, user_conte
 
 def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm, stream=True, use_lexical_search=True):
     context_results = semantic_search(query=query)
-    chunks = get_chunks(chunk_settings[chunk_size]['json_file'])
+    chunks = get_chroma_json()
+    # chunks = get_chunks(chunk_settings[chunk_size]['json_file'])
 
     if use_lexical_search:
         tokenized_text = []
-        for chunk in chunks:
-            post = chunk['page_content']
-            tokenized_text.append(chinese_word_preprocessing(post))
+        # for chunk in chunks:
+        #     print(chunk)
+        #     post = chunk['page_content']
+        #     tokenized_text.append(chinese_word_preprocessing(post))
+        for chunk in chunks['documents']:
+            if (chunk != 'Hello! How can I assist you today?'):
+                tokenized_text.append(chinese_word_preprocessing(chunk))
         lexical_index = BM25Okapi(tokenized_text)
         lexical_context = lexical_search(
             index=lexical_index,
-            query=query, 
+            query=query,
             chunks=chunks
         )
         # Insert after <lexical_search_k> worth of semantic results

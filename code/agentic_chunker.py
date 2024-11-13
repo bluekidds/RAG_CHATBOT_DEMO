@@ -1,5 +1,6 @@
 from typing import Optional
-from langchain_core.pydantic_v1 import BaseModel
+from pydantic import BaseModel
+# from langchain_core.pydantic_v1 import BaseModel
 from langchain.chains import create_extraction_chain_pydantic
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chat_models import AzureChatOpenAI
@@ -106,18 +107,18 @@ class AgenticChunker:
 
         runnable = PROMPT | self.llm
 
-        # invoked = runnable.invoke({
-        #     "proposition": "\n".join(chunk['propositions']),
-        #     "current_summary" : chunk['summary']
-        # })
-        # print('------result from azure openai------')
-        # print(invoked)
-        # if invoked is None:
-        #     return ''
-        # new_chunk_summary = invoked.content
+        invoked = runnable.invoke({
+            "proposition": "\n".join(chunk['propositions']),
+            "current_summary" : chunk['summary']
+        })
+        print('------result from azure openai------')
+        print(invoked)
+        if invoked is None:
+            return ''
+        new_chunk_summary = invoked.content
 
-        # return new_chunk_summary
-        return ''
+        return new_chunk_summary
+        # return ''
     
     def _update_chunk_title(self, chunk):
         """
@@ -151,17 +152,17 @@ class AgenticChunker:
 
         runnable = PROMPT | self.llm
 
-        # try:
-        #     updated_chunk_title = runnable.invoke({
-        #         "proposition": "\n".join(chunk['propositions']),
-        #         "current_summary" : chunk['summary'],
-        #         "current_title" : chunk['title']
-        #     }).content
-        #     return updated_chunk_title
-        # except Exception as e:
-        #     print(e)
-        #     return ''
-        return ''
+        try:
+            updated_chunk_title = runnable.invoke({
+                "proposition": "\n".join(chunk['propositions']),
+                "current_summary" : chunk['summary'],
+                "current_title" : chunk['title']
+            }).content
+            return updated_chunk_title
+        except Exception as e:
+            print(e)
+            return ''
+        # return ''
 
         
 
@@ -194,12 +195,12 @@ class AgenticChunker:
 
         runnable = PROMPT | self.llm
 
-        # new_chunk_summary = runnable.invoke({
-        #     "proposition": proposition
-        # }).content
+        new_chunk_summary = runnable.invoke({
+            "proposition": proposition
+        }).content
 
-        # return new_chunk_summary
-        return ''
+        return new_chunk_summary
+        # return ''
     
     def _get_new_chunk_title(self, summary):
         PROMPT = ChatPromptTemplate.from_messages(
@@ -230,17 +231,17 @@ class AgenticChunker:
 
         runnable = PROMPT | self.llm
 
-        # try:
-        #     new_chunk_title = runnable.invoke({
-        #         "summary": summary
-        #     }).content
+        try:
+            new_chunk_title = runnable.invoke({
+                "summary": summary
+            }).content
 
-        #     return new_chunk_title
-        # except Exception as e:
-        #     print(e)
-        #     return ''
+            return new_chunk_title
+        except Exception as e:
+            print(e)
+            return ''
 
-        return ''
+        # return ''
 
     def _create_new_chunk(self, proposition):
         new_chunk_id = str(uuid.uuid4())[:self.id_truncate_limit] # I don't want long ids
@@ -308,32 +309,32 @@ class AgenticChunker:
 
         runnable = PROMPT | self.llm
 
-        # chunk_found = runnable.invoke({
-        #     "proposition": proposition,
-        #     "current_chunk_outline": current_chunk_outline
-        # }).content
-        # print(chunk_found)
+        chunk_found = runnable.invoke({
+            "proposition": proposition,
+            "current_chunk_outline": current_chunk_outline
+        }).content
+        print(chunk_found)
 
         # Pydantic data class
-        # class ChunkID(BaseModel):
-        #     """Extracting the chunk id"""
-        #     chunk_id: Optional[str]
+        class ChunkID(BaseModel):
+            """Extracting the chunk id"""
+            chunk_id: Optional[str]
             
         # Extraction to catch-all LLM responses. This is a bandaid
-        # extraction_chain = create_extraction_chain_pydantic(pydantic_schema=ChunkID, llm=self.llm)
-        # extraction_found = extraction_chain.run(chunk_found)
-        # if extraction_found:
-        #     chunk_found = extraction_found[0].chunk_id
+        extraction_chain = create_extraction_chain_pydantic(pydantic_schema=ChunkID, llm=self.llm)
+        extraction_found = extraction_chain.run(chunk_found)
+        if extraction_found:
+            chunk_found = extraction_found[0].chunk_id
 
         # If you got a response that isn't the chunk id limit, chances are it's a bad response or it found nothing
         # So return nothing
-        # if chunk_found is None:
-        #     return None
-        # if len(chunk_found) != self.id_truncate_limit:
-        #     return None
+        if chunk_found is None:
+            return None
+        if len(chunk_found) != self.id_truncate_limit:
+            return None
 
-        # return chunk_found
-        return None
+        return chunk_found
+        # return None
     
     def get_chunks(self, get_type='dict'):
         """
