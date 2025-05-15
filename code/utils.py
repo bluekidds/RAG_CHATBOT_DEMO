@@ -8,7 +8,7 @@ from langchain_openai import AzureChatOpenAI
 from langchain_chroma import Chroma
 from langchain.docstore.document import Document
 # from langchain_community.callbacks import get_openai_callback
-from agentic_chunker import AgenticChunker
+from code.agentic_chunker import AgenticChunker
 from langchain.output_parsers.openai_tools import JsonOutputToolsParser
 # from langchain_community.chat_models import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -20,13 +20,15 @@ from pydantic import BaseModel
 # from langchain_core.pydantic_v1 import BaseModel
 from langchain import hub
 from rank_bm25 import BM25Okapi
-from config import config
-# from openai import OpenAI
-from openai import AzureOpenAI
+from code.config import config
+from openai import OpenAI
+from openai import AsyncAzureOpenAI
+import itertools
 import pandas as pd
 import numpy as np
 import chromadb
 import tiktoken
+import asyncio
 import pickle
 import jieba
 import json
@@ -56,7 +58,6 @@ chunk_settings = config['CHUNKS']
 
 evaluation_llm = config['EVALUATION_LLM']
 evaluation_system_content = config['EVALUATION_SYSTEM_CONTENT']
-
 
 def get_config(key):
     return config[key]
@@ -136,14 +137,85 @@ def Transformer_DocumentFormat(split_docs, file_id_name):
     ids = [element for sublist in ids for element in sublist]
     return metadatas, documents, embeddings, ids
 
-def get_client():
-    # client = OpenAI(api_key=api_key)
-    client = AzureOpenAI(
+# def get_client():
+#     # client = OpenAI(api_key=api_key)
+#     client = AsyncAzureOpenAI(
+#         api_key=openai_api_key,  
+#         api_version="2023-12-01-preview",
+#         azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
+#     )
+#     return client
+
+# 假設你預先建立 N 個 client
+N = 12
+CLIENT_POOL = [
+    AsyncAzureOpenAI(
         api_key=openai_api_key,  
-        api_version="2023-12-01-preview",
+        api_version="2024-12-01-preview",
+        # model="gpt-4o-mini-2",
+        # azure_endpoint="https://admin-m9tju56x-eastus2.cognitiveservices.azure.com/"
         azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
     )
-    return client
+    for _ in range(N)
+]
+# 建立一個輪替迭代器
+CLIENT_ITER = itertools.cycle(CLIENT_POOL)
+
+def get_client(origin=True):
+    if (origin):
+        print('using origin')
+        client = AsyncAzureOpenAI(
+            api_key=openai_api_key,  
+            api_version="2025-01-01-preview",
+            # model="gpt-4o-mini-2",
+            azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
+        )
+        return client
+    # 每次請求時從輪替迭代器中取出下一個 client
+    return next(CLIENT_ITER)
+
+
+# 假設你預先建立 N 個 client
+# CLIENT_POOL = [
+#     AsyncAzureOpenAI(
+#         api_key=openai_api_key,  
+#         api_version="2025-01-01-preview",
+#         # model="gpt-4o-mini-2",
+#         azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
+#     ),
+#     AsyncAzureOpenAI(
+#         api_key=openai_api_key,  
+#         api_version="2025-01-01-preview",
+#         # model="gpt-4o-mini-2",
+#         azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
+#     ),
+#     AsyncAzureOpenAI(
+#         api_key="",
+#         api_version="2025-01-01-preview",
+#         # model="gpt-4o-mini3",
+#         azure_endpoint="https://admin-m9jwm12r-japaneast.cognitiveservices.azure.com/"
+#     ),
+#     AsyncAzureOpenAI(
+#         api_key=openai_api_key,  
+#         api_version="2025-01-01-preview",
+#         # model="gpt-4o-mini-2",
+#         azure_endpoint="https://wavenet-rag-openai.openai.azure.com/"
+#     ),
+#     AsyncAzureOpenAI(
+#         api_key="",
+#         api_version="2025-01-01-preview",
+#         # model="gpt-4o-mini3",
+#         azure_endpoint="https://admin-m9jwm12r-japaneast.cognitiveservices.azure.com/"
+#     )
+# ]
+# # 建立一個輪替迭代器
+# CLIENT_ITER = itertools.cycle(CLIENT_POOL)
+
+# def get_client(origin=True):
+#     if (origin):
+#         return CLIENT_POOL[0]
+#     # 每次請求時從輪替迭代器中取出下一個 client
+#     return next(CLIENT_ITER)
 
 # class for level5
 class Sentences(BaseModel):
@@ -421,8 +493,58 @@ def generate_response(stream, llm=llm, system_content=system_content, user_conte
             retry_count += 1
     return ""
 
-def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm, stream=True, use_lexical_search=True):
+async def generate_response_async(stream, llm=llm, system_content=system_content, user_content="", max_retries=1, retry_interval=60):
+    """Generate response from an LLM (async version)."""
+    retry_count = 0
+    client = get_client()
+
+    messages = [
+        {"role": role, "content": content}
+        for role, content in [
+            ("system", system_content),
+            ("assistant", assistant_content),
+            ("user", user_content),
+        ]
+        if content
+    ]
+
+    while retry_count <= max_retries:
+        try:
+            print('asking gpt (async)')
+            t0 = time.perf_counter()
+            chat_completion = await client.chat.completions.create(
+                model="gpt-35-turbo",
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=False,
+                messages=messages,
+            )
+            t1 = time.perf_counter()
+            usage = chat_completion.usage
+            prompt_tokens     = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
+            total_tokens      = usage.total_tokens
+            elapsed = t1 - t0
+            print(f"usage:")
+            print(usage)
+            print(f"prompt token: {prompt_tokens}")
+            print(f"completion_tokens: {completion_tokens}")
+            print(f"total_tokens: {total_tokens}")
+            print(f"openai耗時: {elapsed:.2f} 秒")
+
+            return prepare_response(chat_completion, stream=False)
+
+        except Exception as e:
+            print(f"Exception: {e}")
+            retry_count += 1
+            await asyncio.sleep(retry_interval)
+
+    return ""
+
+async def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm, stream=True, use_lexical_search=True):
+    start_semantic_search_time = time.time()
     context_results = semantic_search(query=query)
+    end_semantic_search_time = time.time()
     chunks = get_chroma_json()
     # chunks = get_chunks(chunk_settings[chunk_size]['json_file'])
 
@@ -432,15 +554,19 @@ def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm,
         #     print(chunk)
         #     post = chunk['page_content']
         #     tokenized_text.append(chinese_word_preprocessing(post))
+        start_chunk_time = time.time()
         for chunk in chunks['documents']:
             if (chunk != 'Hello! How can I assist you today?'):
                 tokenized_text.append(chinese_word_preprocessing(chunk))
+        end_chunk_time = time.time()
         lexical_index = BM25Okapi(tokenized_text)
+        start_lexical_search_time = time.time()
         lexical_context = lexical_search(
             index=lexical_index,
             query=query,
             chunks=chunks
         )
+        end_lexical_search_time = time.time()
         # Insert after <lexical_search_k> worth of semantic results
         context_results[lexical_search_k:lexical_search_k] = lexical_context
         # Generate response
@@ -451,7 +577,21 @@ def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm,
         methods = [item["method"] for item in context_results]
         user_content = f"query: {query}, context: {context}"
         context_length = get_context_length()
-        answer = generate_response(stream=stream, user_content=trim(user_content, context_length))
+        start_answer_time = time.time()
+        answer = await generate_response_async(stream=stream, user_content=trim(user_content, context_length))
+        end_answer_time = time.time()
+
+        print(query)
+        print('===semantic_search time===')
+        print(end_semantic_search_time - start_semantic_search_time)
+        print('===chunk time===')
+        print(end_chunk_time - start_chunk_time)
+        print('===lexical_search time===')
+        print(end_lexical_search_time - start_lexical_search_time)
+        print('===answer time===')
+        print(end_answer_time - start_answer_time)
+        print('===total time===')
+        print(end_answer_time - start_semantic_search_time)
 
         # Result
         result = {
@@ -463,6 +603,111 @@ def generated_answer_result(query, lexical_search_k = lexical_search_k, llm=llm,
             "context" : context
         }
         return result
+
+
+chunks = get_chroma_json()
+tokenized_text = [
+    chinese_word_preprocessing(chunk)
+    for chunk in chunks['documents']
+    if chunk != 'Hello! How can I assist you today?'
+]
+lexical_index = BM25Okapi(tokenized_text)
+
+async def generated_multi_answer_result(querys, lexical_search_k=lexical_search_k, llm=llm, stream=True, use_lexical_search=True):
+    start_total_time = time.time()
+    chunks = get_chroma_json()
+    # tokenized_text = []
+    # lexical_index = []
+
+    # if use_lexical_search:
+    #     tokenized_text = [
+    #         chinese_word_preprocessing(chunk)
+    #         for chunk in chunks['documents']
+    #         if chunk != 'Hello! How can I assist you today?'
+    #     ]
+    #     lexical_index = BM25Okapi(tokenized_text)
+
+    async def fetch_one(query):
+        start_semantic_search_time = time.time()
+        context_results = semantic_search(query=query)
+        end_semantic_search_time = time.time()
+        print('===semantic_search time===')
+        print(end_semantic_search_time - start_semantic_search_time)
+
+        if use_lexical_search:
+            start_lexical_search_time = time.time()
+            lexical_context = lexical_search(index=lexical_index, query=query, chunks=chunks)
+            end_lexical_search_time = time.time()
+            print('===lexical_search time===')
+            print(end_lexical_search_time - start_lexical_search_time)
+            context_results[lexical_search_k:lexical_search_k] = lexical_context
+
+        context = [item["text"] for item in context_results]
+        sources = [item["source"] for item in context_results]
+        methods = [item["method"] for item in context_results]
+
+        return {
+            "question": query,
+            "source": sources,
+            "methods": methods,
+            "answer": "\n".join(context),
+            "llm": llm,
+            "context": context
+        }
+
+    start_answer_time = time.time()
+    results = await asyncio.gather(*[fetch_one(q) for q in querys])
+    end_answer_time = time.time()
+    print('===answer time===')
+    print(end_answer_time - start_answer_time)
+
+    print(f"✅ 已完成文獻查詢共 {len(results)} 筆，耗時 {time.time() - start_total_time:.2f}s")
+    return results
+
+# async def generated_multi_answer_result(querys, lexical_search_k=lexical_search_k, llm=llm, stream=True, use_lexical_search=True):
+#     start_total_time = time.time()
+#     chunks = get_chroma_json()
+#     tokenized_text = []
+#     lexical_index = []
+#     if use_lexical_search:
+#         tokenized_text = [
+#             chinese_word_preprocessing(chunk)
+#             for chunk in chunks['documents']
+#             if chunk != 'Hello! How can I assist you today?'
+#         ]
+#         lexical_index = BM25Okapi(tokenized_text)
+
+#     results = []
+
+#     for idx, query in enumerate(querys):
+#         t0 = time.time()
+#         context_results = semantic_search(query=query)
+
+#         if use_lexical_search:
+#             # tokenized_text = [
+#             #     chinese_word_preprocessing(chunk)
+#             #     for chunk in chunks['documents']
+#             #     if chunk != 'Hello! How can I assist you today?'
+#             # ]
+#             # lexical_index = BM25Okapi(tokenized_text)
+#             lexical_context = lexical_search(index=lexical_index, query=query, chunks=chunks)
+#             context_results[lexical_search_k:lexical_search_k] = lexical_context
+
+#         context = [item["text"] for item in context_results]
+#         sources = [item["source"] for item in context_results]
+#         methods = [item["method"] for item in context_results]
+
+#         results.append({
+#             "question": query,
+#             "source": sources,
+#             "methods": methods,
+#             "answer": "\n".join(context),  # 直接將 context 文獻作為回答
+#             "llm": llm,
+#             "context": context
+#         })
+
+#     print(f"✅ 已完成文獻查詢共 {len(results)} 筆，耗時 {time.time() - start_total_time:.2f}s")
+#     return results
     
 ## for evaluation
 def get_retrieval_score(references, generated):
@@ -643,13 +888,37 @@ def get_evaluation_result(chunk_size_list=[],
 
     return result
 
-def dalle3(prompt):
-    client = get_client()
-    result = client.images.generate(
-        model="Dalle3", # the name of your DALL-E 3 deployment
-        prompt=prompt,
-        n=1
-    )
+async def dalle3(prompt, origin):
+    print('dalle 3 isrequested with the prompt')
+    print(prompt)
+    print('calling dalle3 from this origin')
+    print(origin)
+    # return ''
+    client = get_client(True)
+    if origin == 'bobai.rdlab.tw':
+        print('change model to bobai')
+        client = OpenAI(api_key="")
+        result = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            n=1,
+        )
+        print(result)
+    elif origin == 'dev.daivinci.punwave.com':
+        print('change model to dev')
+        client = OpenAI(api_key="")
+        result = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            n=1,
+        )
+        print(result)
+    else:
+        result = await client.images.generate(
+            model="Dalle3", # the name of your DALL-E 3 deployment
+            prompt=prompt,
+            n=1
+        )
 
     json_response = json.loads(result.model_dump_json())
     image_url = json_response["data"][0]["url"]

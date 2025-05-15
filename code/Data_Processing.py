@@ -1,4 +1,4 @@
-from utils import load_documents, split_text, save_to_chroma, save_to_bm25
+from code.utils import load_documents, split_text, save_to_chroma, save_to_bm25
 
 def generate_data_store():
   """

@@ -1,7 +1,7 @@
 
 import time
 
-from utils import get_evaluation_result
+from code.utils import get_evaluation_result
 
 def evaluation():
     chunk_size_list = [500]

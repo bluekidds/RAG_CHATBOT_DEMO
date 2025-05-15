@@ -22,9 +22,15 @@ azure-storage-blob
 fastapi
 fastapi[standard]
 langchain
-langchain-chroma 
+langchain-chroma
 pydantic
 lxml
 oracledb
 jq
-uvicorn[standard]
+wikipedia
+llama_index
+llama-index-readers-wikipedia
+llama-index-llms-azure-openai
+llama-index-embeddings-azure-openai
+asyncio
+streamlit_pills

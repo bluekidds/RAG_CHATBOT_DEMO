@@ -13,7 +13,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import AzureOpenAIEmbeddings
 
-from config import config
+from code.config import config
 import glob
 import os
 import uuid

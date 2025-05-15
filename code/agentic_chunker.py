@@ -5,7 +5,7 @@ from langchain.chains import create_extraction_chain_pydantic
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chat_models import AzureChatOpenAI
 from dotenv import load_dotenv
-from config import config
+from code.config import config
 import uuid
 import os
 
