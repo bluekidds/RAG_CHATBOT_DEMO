@@ -1,0 +1,13 @@
+.DS_Store
+venv
+chromadb
+evaluations
+__pycache__
+
+20240930
+20241008
+自行車中心提供
+potent
+nonpotent
+letsencrypt
+.env

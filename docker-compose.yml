@@ -1,0 +1,105 @@
+version: '3.7'
+
+services:
+  traefik:
+    image: traefik:v2.1
+    command:
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --providers.docker=true
+      - --certificatesresolvers.myresolver.acme.tlschallenge=true
+      - --certificatesresolvers.myresolver.acme.email=aws_cloud@wavenet.com.tw
+      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.myresolver.acme.dnsChallenge.provider=cloudflare
+      - --certificatesresolvers.myresolver.acme.dnsChallenge.delayBeforeCheck=0
+      # - --certificatesresolvers.myresolver.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory
+    labels:
+      - "traefik.http.routers.http_catchall.rule=HostRegexp(`{any:.+}`)"
+      - "traefik.http.routers.http_catchall.entrypoints=web"
+      - "traefik.http.routers.http_catchall.middlewares=https_redirect"
+      - "traefik.http.middlewares.https_redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.https_redirect.redirectscheme.permanent=true"
+    environment:
+      - CF_API_EMAIL=${CF_API_EMAIL}
+      - CF_API_KEY=${CF_API_KEY}
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./letsencrypt:/letsencrypt
+    container_name: "traefik"
+
+  rag-web:
+    build:
+      context: ./
+      dockerfile: Dockerfile.ragweb
+    command: streamlit run code/RAG_CHATBOT.py --server.port 8501
+    volumes:
+        - ./:/usr/src/app
+    ports:
+        - 8501:8501
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rag.tls.certresolver=myresolver"
+      - "traefik.http.routers.rag.rule=Host(`${RAG_APP_URL}`)"
+      - "traefik.http.routers.rag.entrypoints=websecure"
+      - "traefik.http.services.rag.loadbalancer.server.port=8501"
+    container_name: "rag-web"
+
+  rag-fa:
+    build:
+      context: ./
+      dockerfile: Dockerfile.fa
+    # command: fastapi run code/fa.py
+    # command: uvicorn code.fa:app --host 0.0.0.0 --port 8000 --workers 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+        - ./:/usr/src/app
+    ports:
+        - 8000:8000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fa.tls.certresolver=myresolver"
+      - "traefik.http.routers.fa.rule=Host(`${RAG_FA_URL}`)"
+      - "traefik.http.routers.fa.entrypoints=websecure"
+      - "traefik.http.services.fa.loadbalancer.server.port=8000"
+    container_name: "rag-fa"
+
+  streamlit-chatbot:
+    build: ./streamlit_chatbot/
+    command: streamlit run app.py --server.port 8501
+    volumes:
+        - ./streamlit_chatbot/:/usr/src/app
+    ports:
+        - 8502:8501
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sc.tls.certresolver=myresolver"
+      - "traefik.http.routers.sc.rule=Host(`${SC_APP_URL}`)"
+      - "traefik.http.routers.sc.entrypoints=websecure"
+      - "traefik.http.services.sc.loadbalancer.server.port=8501"
+    container_name: "sc-web"
+
+  # oracle-db:
+  #   image: container-registry.oracle.com/database/free:latest
+  #   environment:
+  #     - ORACLE_PWD=${ORACLE_PWD}
+  #   ports:
+  #     - 1521:1521
+  #   volumes:
+  #     - oracle-volume:/opt/oracle/oradata
+  #   container_name: "oracle-db"
+#     networks:
+#       - "traefik"
+
+volumes:
+  oracle-volume:
+# networks:
+#   traefik:
+#     external:
+#       name: traefik_proxy
